@@ -1,0 +1,90 @@
+# Estimation of inbreeding coefficient and allele frequencies
+```{r}
+library(rstan)
+```
+
+## Initialize parameters
+```{r}
+# N: number of individuals
+# M: number of measured loci
+# f: inbreeding coefficient
+N <- 10000
+M <- 1 # only one locus
+f <- 0.3
+```
+
+
+## Simulate genotype
+```{r}
+simulate_genotypes <- function(N, M, f) {
+  
+  p <- runif(M, 0, 1)
+  
+  pAA <- pAa <- paa <- vector(mode = "numeric", length = M)
+  
+  for (j in 1:M) {
+    pAA[j] = f * p[j] + (1-f) * p[j] * p[j]
+    pAa[j] = 2 * (1-f) * p[j] * (1-p[j])
+    paa[j] = f * (1-p[j]) + (1-f) * (1-p[j]) * (1-p[j])
+  }
+  
+  x <- matrix(nrow = N, ncol = M)
+  for (j in 1:M) {
+    x[1:N, j] <- sample(c(0,1,2), N, replace=T, prob=c(pAA[j], pAa[j], paa[j]))
+  }
+  list(x=x, p=p)
+}
+
+x_sim <- simulate_genotypes(N, M, f)
+x <- x_sim$x
+p <- x_sim$p
+```
+
+
+## Generate counts for each genotype 
+```{r}
+N_AA <- N_Aa <- N_aa <- vector(mode = "numeric", length = M)
+for(j in 1:M) {
+  N_AA[j] <- sum(x[,j]==0)
+  N_Aa[j] <- sum(x[,j]==1)
+  N_aa[j] <- sum(x[,j]==2)
+}
+```
+
+
+# Model specification in Stan
+```{r}
+# the following model specification assumes only one locus (M=1)
+stan_model <- "data{
+  int<lower=1> N;
+  int<lower=0> N_AA;
+  int<lower=0> N_Aa;
+  int<lower=0> N_aa;
+}
+parameters{
+  real<lower=0,upper=1> f; // inbreeding parameter
+  real<lower=0,upper=1> p; // allele frequencies
+}
+transformed parameters{
+  real lpAA;
+  real lpAa;
+  real lpaa;
+  real lp;
+  lpAA = log(f * p + (1-f)*p*p);
+  lpAa = log(2 * (1-f) * p * (1-p));
+  lpaa = log(f * (1-p) + (1-f) * (1-p) * (1-p));
+  lp = N_AA * lpAA + N_Aa * lpAa + N_aa * lpaa;
+}
+model{
+  target += lp;
+}
+"
+```
+
+## Fit model
+```{r}
+stan_data <- list(N=N, N_AA=N_AA, N_Aa=N_Aa, N_aa=N_aa)
+stan_fit <- stan(model_code = stan_model, data = stan_data, iter = 10000, chains = 1)
+
+traceplot(stan_fit, pars=c("f", "p"), inc_warmup=T)
+```
